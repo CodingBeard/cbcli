@@ -47,12 +47,23 @@ func (d defaultErrorHandler) Error(e error) {
 	log.Println("ERROR", e.Error()+"\n"+stack)
 }
 
+type Config interface {
+	/**
+	first return type is whether the config is enabled
+	second return type is an error when the config path is not defined
+	the path passed in will be in the format: cbcli.group.name
+	where group and name are replaced with the task's returned values
+	*/
+	GetRequiredBool(path string) (bool, error)
+}
+
 var TaskNotFound = errors.New("task not found")
 
 type TaskContainer struct {
 	tasks  []Task
 	logger Logger
 	errors ErrorHandler
+	config Config
 }
 
 func New() *TaskContainer {
@@ -74,10 +85,22 @@ func (t *TaskContainer) SetErrorHandler(handler ErrorHandler) {
 	t.errors = handler
 }
 
+func (t *TaskContainer) SetConfig(config Config) {
+	t.config = config
+}
+
 func (t *TaskContainer) Execute() error {
 	if len(os.Args) > 2 && os.Args != nil {
 		group := os.Args[1]
 		name := os.Args[2]
+
+		if t.config != nil {
+			enabled, e := t.config.GetRequiredBool(fmt.Sprintf("cbcli.%s.%s", group, name))
+			if e == nil && !enabled {
+				t.logger.InfoF("CLI", "Task %s:%s is not enabled", group, name)
+				os.Exit(1)
+			}
+		}
 
 		e := t.RunTask(group, name)
 		if e != nil {
@@ -115,6 +138,12 @@ func (t *TaskContainer) DispatchTasks() {
 
 	for taskKey := range t.tasks {
 		task := t.tasks[taskKey]
+		if t.config != nil {
+			enabled, e := t.config.GetRequiredBool(fmt.Sprintf("cbcli.%s.%s", task.GetGroup(), task.GetName()))
+			if e == nil && !enabled {
+				continue
+			}
+		}
 		if task.GetSchedule() == "manual" || task.GetSchedule() == "" {
 			continue
 		}
@@ -124,7 +153,7 @@ func (t *TaskContainer) DispatchTasks() {
 			if e != nil {
 				t.errors.Error(e)
 			}
-			e = exec.Command(executable, "start-task", task.GetGroup(), task.GetName()).Run()
+			e = exec.Command(executable, task.GetGroup(), task.GetName()).Run()
 			if e != nil {
 				t.errors.Error(e)
 			}
