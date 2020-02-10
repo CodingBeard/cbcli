@@ -21,9 +21,15 @@ type Task interface {
 
 type Logger interface {
 	InfoF(category string, message string, args ...interface{})
+	Write(message []byte) (n int, e error)
 }
 
 type defaultLogger struct{}
+
+func (d defaultLogger) Write(p []byte) (n int, err error) {
+	d.InfoF("ERROR", string(p))
+	return 0, nil
+}
 
 func (d defaultLogger) InfoF(category string, message string, args ...interface{}) {
 	log.Println(category+":", fmt.Sprintf(message, args...))
@@ -60,10 +66,11 @@ type Config interface {
 var TaskNotFound = errors.New("task not found")
 
 type TaskContainer struct {
-	tasks  []Task
-	logger Logger
-	errors ErrorHandler
-	config Config
+	tasks        []Task
+	logger       Logger
+	errors       ErrorHandler
+	config       Config
+	dispatchEnvs []string
 }
 
 func New() *TaskContainer {
@@ -87,6 +94,10 @@ func (t *TaskContainer) SetErrorHandler(handler ErrorHandler) {
 
 func (t *TaskContainer) SetConfig(config Config) {
 	t.config = config
+}
+
+func (t *TaskContainer) SetDispatchEnvironment(envs []string) {
+	t.dispatchEnvs = envs
 }
 
 func (t *TaskContainer) Execute() error {
@@ -129,7 +140,6 @@ func (t *TaskContainer) RunTask(group, name string) error {
 		}
 	}
 
-
 	return TaskNotFound
 }
 
@@ -153,7 +163,11 @@ func (t *TaskContainer) DispatchTasks() {
 			if e != nil {
 				t.errors.Error(e)
 			}
-			e = exec.Command(executable, task.GetGroup(), task.GetName()).Run()
+			cmd := exec.Command(executable, task.GetGroup(), task.GetName())
+			cmd.Env = t.dispatchEnvs
+			cmd.Stderr = t.logger
+			cmd.Stderr = t.logger
+			e = cmd.Run()
 			if e != nil {
 				t.errors.Error(e)
 			}
