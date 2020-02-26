@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/codingbeard/cbutil"
 	"github.com/robfig/cron/v3"
 	"log"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 )
 
 type Task interface {
@@ -17,6 +19,10 @@ type Task interface {
 	GetGroup() string
 	GetName() string
 	Run() error
+}
+
+type ErrorAfterDurationTask interface {
+	GetErrorAfterDuration() time.Duration
 }
 
 type Logger interface {
@@ -133,8 +139,36 @@ func (t *TaskContainer) Execute() error {
 func (t *TaskContainer) RunTask(group, name string) error {
 	for _, task := range t.tasks {
 		if task.GetGroup() == group && task.GetName() == name {
+
+			trueVariable := true
+			falseVariable := false
+			var running *bool
+			if errorAfterTask, ok := task.(ErrorAfterDurationTask); ok {
+				go func() {
+					elapsed := time.Duration(0)
+					for true {
+						cbutil.Sleep(time.Second)
+						elapsed += time.Second
+
+						if elapsed >= errorAfterTask.GetErrorAfterDuration() {
+							if *running {
+								t.errors.Error(fmt.Errorf(
+									"task still running after expected duration: %s:%s %ds",
+									task.GetGroup(),
+									task.GetName(),
+									int(errorAfterTask.GetErrorAfterDuration()/time.Second),
+								))
+							}
+							break
+						}
+					}
+				}()
+			}
+
 			t.logger.InfoF("CLI", "Running task (%s:%s)", task.GetGroup(), task.GetName())
+			running = &trueVariable
 			e := task.Run()
+			running = &falseVariable
 			t.logger.InfoF("CLI", "Finished running task (%s:%s)", task.GetGroup(), task.GetName())
 			return e
 		}
