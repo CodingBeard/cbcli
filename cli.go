@@ -15,10 +15,17 @@ import (
 )
 
 type Task interface {
-	GetSchedule() string
 	GetGroup() string
 	GetName() string
 	Run() error
+}
+
+type ScheduledTask interface {
+	GetSchedule() string
+}
+
+type GoroutineConfigurableTask interface {
+	ExecuteInGoroutine() bool
 }
 
 type ErrorAfterDurationTask interface {
@@ -43,6 +50,7 @@ func (d defaultLogger) InfoF(category string, message string, args ...interface{
 
 type ErrorHandler interface {
 	Error(e error)
+	Recover()
 }
 
 type defaultErrorHandler struct{}
@@ -57,6 +65,15 @@ func (d defaultErrorHandler) Error(e error) {
 	newStackParts = append(newStackParts, stackParts[3:]...)
 	stack = strings.Join(newStackParts, "\n")
 	log.Println("ERROR", e.Error()+"\n"+stack)
+}
+
+func (d defaultErrorHandler) Recover() {
+	e := recover()
+	if err, ok := e.(error); ok {
+		d.Error(err)
+	} else {
+		d.Error(errors.New(fmt.Sprint(e)))
+	}
 }
 
 type Config interface {
@@ -182,28 +199,47 @@ func (t *TaskContainer) DispatchTasks() {
 
 	for taskKey := range t.tasks {
 		task := t.tasks[taskKey]
+		scheduledTask, isScheduled := task.(ScheduledTask)
+		if !isScheduled {
+			continue
+		}
+		if scheduledTask.GetSchedule() == "manual" || scheduledTask.GetSchedule() == "" {
+			continue
+		}
 		if t.config != nil {
 			enabled, e := t.config.GetRequiredBool(fmt.Sprintf("cbcli.%s.%s", task.GetGroup(), task.GetName()))
 			if e == nil && !enabled {
 				continue
 			}
 		}
-		if task.GetSchedule() == "manual" || task.GetSchedule() == "" {
-			continue
-		}
-		_, e := crontab.AddFunc(task.GetSchedule(), func() {
+		_, e := crontab.AddFunc(scheduledTask.GetSchedule(), func() {
 			t.logger.InfoF("CLI", "Dispatching task (%s:%s)", task.GetGroup(), task.GetName())
-			executable, e := os.Executable()
-			if e != nil {
-				t.errors.Error(e)
+			isGoroutineTask := false
+			goroutineTask, isGoroutineConfigurableTask := task.(GoroutineConfigurableTask)
+			if isGoroutineConfigurableTask {
+				isGoroutineTask = goroutineTask.ExecuteInGoroutine()
 			}
-			cmd := exec.Command(executable, task.GetGroup(), task.GetName())
-			cmd.Env = t.dispatchEnvs
-			cmd.Stderr = t.logger
-			cmd.Stderr = t.logger
-			e = cmd.Run()
-			if e != nil {
-				t.errors.Error(e)
+			if isGoroutineTask {
+				go func() {
+					t.errors.Recover()
+					e := t.RunTask(task.GetGroup(), task.GetName())
+					if e != nil {
+						t.errors.Error(e)
+					}
+				}()
+			} else {
+				executable, e := os.Executable()
+				if e != nil {
+					t.errors.Error(e)
+				}
+				cmd := exec.Command(executable, task.GetGroup(), task.GetName())
+				cmd.Env = t.dispatchEnvs
+				cmd.Stderr = t.logger
+				cmd.Stderr = t.logger
+				e = cmd.Run()
+				if e != nil {
+					t.errors.Error(e)
+				}
 			}
 		})
 
