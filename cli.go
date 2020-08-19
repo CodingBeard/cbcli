@@ -131,8 +131,9 @@ func (t *TaskContainer) Execute() error {
 		if t.config != nil {
 			enabled, e := t.config.GetRequiredBool(fmt.Sprintf("cbcli.%s.%s", group, name))
 			if e == nil && !enabled {
-				t.logger.InfoF("CLI", "Task %s:%s is not enabled", group, name)
-				os.Exit(1)
+				e = fmt.Errorf("Task %s:%s is not enabled", group, name)
+				t.logger.InfoF("CLI", e.Error())
+				return e
 			}
 		}
 
@@ -142,10 +143,9 @@ func (t *TaskContainer) Execute() error {
 				t.logger.InfoF("CLI", "Task %s:%s not found", group, name)
 			} else {
 				t.errors.Error(e)
+				return e
 			}
-			os.Exit(1)
 		}
-		os.Exit(0)
 	} else {
 		t.logger.InfoF("CLI", "Not enough arguments, expecting: taskGroup taskName")
 	}
