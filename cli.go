@@ -234,7 +234,7 @@ func (t *TaskContainer) DispatchTasks() {
 				}
 				cmd := exec.Command(executable, task.GetGroup(), task.GetName())
 				cmd.Env = t.dispatchEnvs
-				cmd.Stderr = t.logger
+				cmd.Stdout = t.logger
 				cmd.Stderr = t.logger
 				e = cmd.Run()
 				if e != nil {
